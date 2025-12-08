@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.17] - 2025-12-08
+
+### Added
+- **Media key support** - Added support for media keys as forward/remap targets (#28)
+  - Supported media keys: `play`, `pause`, `next`, `previous`, `fast`, `rewind`, `brightness_up`, `brightness_down`, `illumination_up`, `illumination_down`, `sound_up`, `sound_down`, `mute`
+  - Example: `cmd - p | play` forwards Cmd+P to the play/pause media key
+
 ## [0.0.16] - 2025-11-30
 
 ### Fixed
@@ -285,7 +292,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Efficient HashMap-based hotkey lookup
 - Stack-based buffers for process name retrieval
 
-[Unreleased]: https://github.com/jackielii/skhd.zig/compare/v0.0.16...HEAD
+[Unreleased]: https://github.com/jackielii/skhd.zig/compare/v0.0.17...HEAD
+[0.0.17]: https://github.com/jackielii/skhd.zig/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/jackielii/skhd.zig/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/jackielii/skhd.zig/compare/v0.0.13...v0.0.15
 [0.0.13]: https://github.com/jackielii/skhd.zig/compare/v0.0.12...v0.0.13
