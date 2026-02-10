@@ -67,51 +67,11 @@ jobs:
       with:
         version: 0.14.0
     
-    - name: Setup Code Signing Certificate
-      env:
-        CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE }}
-        CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-      run: |
-        # Create variables
-        CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-        KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-        # Import certificate if available
-        if [ -n "$CERTIFICATE_P12" ]; then
-          echo "Certificate found, setting up code signing..."
-
-          # Decode base64 certificate
-          echo -n "$CERTIFICATE_P12" | base64 --decode -o $CERTIFICATE_PATH
-
-          # Create temporary keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          # Import certificate to keychain
-          security import $CERTIFICATE_PATH -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-
-          # Allow codesign to access the certificate
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          echo "SHOULD_SIGN=true" >> $GITHUB_ENV
-        else
-          echo "No certificate found, skipping code signing (binaries will use adhoc signature)"
-          echo "SHOULD_SIGN=false" >> $GITHUB_ENV
-        fi
 
     - name: Build Release
       run: |
         zig build -Doptimize=ReleaseFast
         mv zig-out/bin/skhd skhd-${{ matrix.arch }}-macos
-
-    - name: Code Sign Binary
-      if: env.SHOULD_SIGN == 'true'
-      run: |
-        codesign -f -s "skhd-cert" -i com.jackielii.skhd skhd-${{ matrix.arch }}-macos
-        codesign -dv skhd-${{ matrix.arch }}-macos
 
     - name: Create tarball
       run: |
@@ -143,17 +103,6 @@ jobs:
           --repo ${{ github.repository }} \
           --draft=false
 
-  update-homebrew:
-    needs: publish-release
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout homebrew-tap
-      uses: actions/checkout@v4
-      with:
-        repository: jackielii/homebrew-tap
-        token: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
-        path: homebrew-tap
-
     - name: Get release info
       id: release
       env:
@@ -172,28 +121,4 @@ jobs:
         
         echo "arm64_sha=${ARM64_SHA}" >> $GITHUB_OUTPUT
         echo "x86_64_sha=${X86_64_SHA}" >> $GITHUB_OUTPUT
-
-    - name: Update Formula
-      run: |
-        cd homebrew-tap
-        
-        # Update version
-        sed -i "s/version \".*\"/version \"${{ steps.release.outputs.version }}\"/" Formula/skhd-zig.rb
-        
-        # Update URLs
-        sed -i "s|download/v[0-9.(-preview)]\+/skhd-x86_64|download/v${{ steps.release.outputs.version }}/skhd-x86_64|" Formula/skhd-zig.rb
-        sed -i "s|download/v[0-9.(-preview)]\+/skhd-arm64|download/v${{ steps.release.outputs.version }}/skhd-arm64|" Formula/skhd-zig.rb
-        
-        # Update SHA256
-        sed -i "/x86_64-macos.tar.gz/,/sha256/ s/sha256 \".*\"/sha256 \"${{ steps.release.outputs.x86_64_sha }}\"/" Formula/skhd-zig.rb
-        sed -i "/arm64-macos.tar.gz/,/sha256/ s/sha256 \".*\"/sha256 \"${{ steps.release.outputs.arm64_sha }}\"/" Formula/skhd-zig.rb
-
-    - name: Commit and push
-      run: |
-        cd homebrew-tap
-        git config user.name "GitHub Actions"
-        git config user.email "actions@github.com"
-        git add Formula/skhd-zig.rb
-        git commit -m "Update skhd-zig to v${{ steps.release.outputs.version }}"
-        git push
 
