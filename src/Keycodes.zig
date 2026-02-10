@@ -111,6 +111,7 @@ test "is_modifier" {
 pub const literal_keycode_str = [_][]const u8{
     "return",          "tab",             "space",
     "backspace",       "escape",          "backtick",
+    "semicolon",
 
     // zig fmt: off
 
@@ -134,12 +135,13 @@ pub const literal_keycode_str = [_][]const u8{
     // zig fmt: on
 };
 
-pub const KEY_HAS_IMPLICIT_FN_MOD = 4;
-pub const KEY_HAS_IMPLICIT_NX_MOD = 35;
+pub const KEY_HAS_IMPLICIT_FN_MOD = 6;
+pub const KEY_HAS_IMPLICIT_NX_MOD = 36;
 
 pub const literal_keycode_value = [_]u32{
     c.kVK_Return,                 c.kVK_Tab,                  c.kVK_Space,
     c.kVK_Delete,                 c.kVK_Escape,               c.kVK_ANSI_Grave,
+    c.kVK_ANSI_Semicolon,
 
     // zig fmt: off
 
