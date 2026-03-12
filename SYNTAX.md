@@ -227,6 +227,11 @@ cmd - f : @cliclick("dd", "100", "200")      # Mouse down (start drag)
 cmd - g : @cliclick("du", "300", "400")      # Mouse up (end drag)
 cmd - h : @cliclick("c", ".", ".")           # Click at current position
 
+# Relative mouse actions (using + or - prefixes)
+cmd - i : @cliclick("m", "+100", "+0")       # Move 100px right
+cmd - j : @cliclick("m", "-100", "+0")       # Move 100px left
+cmd - k : @cliclick("c", "+0", "-50")        # Click 50px above current pos
+
 # Keyboard actions (take key names or raw keycodes)
 cmd - r : @cliclick("kp", "return")          # Press Return
 cmd - t : @cliclick("kd", "shift")           # Hold Shift down

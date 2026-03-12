@@ -43,13 +43,13 @@ pub const Action = union(enum) {
         const tag_b = std.meta.activeTag(b);
         if (tag_a != tag_b) return false;
         return switch (a) {
-            .click => |pa| pa.x == b.click.x and pa.y == b.click.y,
-            .doubleclick => |pa| pa.x == b.doubleclick.x and pa.y == b.doubleclick.y,
-            .tripleclick => |pa| pa.x == b.tripleclick.x and pa.y == b.tripleclick.y,
-            .rightclick => |pa| pa.x == b.rightclick.x and pa.y == b.rightclick.y,
-            .move => |pa| pa.x == b.move.x and pa.y == b.move.y,
-            .drag_down => |pa| pa.x == b.drag_down.x and pa.y == b.drag_down.y,
-            .drag_up => |pa| pa.x == b.drag_up.x and pa.y == b.drag_up.y,
+            .click => |pa| pa.eql(b.click),
+            .doubleclick => |pa| pa.eql(b.doubleclick),
+            .tripleclick => |pa| pa.eql(b.tripleclick),
+            .rightclick => |pa| pa.eql(b.rightclick),
+            .move => |pa| pa.eql(b.move),
+            .drag_down => |pa| pa.eql(b.drag_down),
+            .drag_up => |pa| pa.eql(b.drag_up),
             .key_press => |ka| ka == b.key_press,
             .key_down => |ka| ka == b.key_down,
             .key_up => |ka| ka == b.key_up,
@@ -60,6 +60,12 @@ pub const Action = union(enum) {
 pub const Point = struct {
     x: i32,
     y: i32,
+    rel_x: bool = false,
+    rel_y: bool = false,
+
+    pub fn eql(a: Point, b: Point) bool {
+        return a.x == b.x and a.y == b.y and a.rel_x == b.rel_x and a.rel_y == b.rel_y;
+    }
 };
 
 pub const ParseError = error{
@@ -119,17 +125,33 @@ pub fn parseAction(cmd: []const u8, args: []const []const u8) ParseError!Action 
 
 fn parsePoint(args: []const []const u8) ParseError!Point {
     if (args.len != 2) return error.InvalidArgumentCount;
-    return Point{
-        .x = parseCoordinate(args[0]) orelse return error.InvalidCoordinate,
-        .y = parseCoordinate(args[1]) orelse return error.InvalidCoordinate,
-    };
+    var point = Point{ .x = 0, .y = 0 };
+    point.x = parseCoordinate(args[0], &point.rel_x) orelse return error.InvalidCoordinate;
+    point.y = parseCoordinate(args[1], &point.rel_y) orelse return error.InvalidCoordinate;
+    return point;
 }
 
-fn parseCoordinate(s: []const u8) ?i32 {
+fn parseCoordinate(s: []const u8, is_relative: *bool) ?i32 {
     // "." means current mouse position — resolved at execution time
-    // At parse time, store a sentinel value
-    if (std.mem.eql(u8, s, ".")) return CURRENT_POS_SENTINEL;
-    return std.fmt.parseInt(i32, s, 10) catch null;
+    if (std.mem.eql(u8, s, ".")) {
+        is_relative.* = true;
+        return 0;
+    }
+
+    if (s.len == 0) return null;
+
+    var input = s;
+    if (input[0] == '+') {
+        is_relative.* = true;
+        input = input[1..];
+    } else if (input[0] == '-') {
+        is_relative.* = true;
+        // parseInt handles the - sign, so we keep it
+    } else {
+        is_relative.* = false;
+    }
+
+    return std.fmt.parseInt(i32, input, 10) catch null;
 }
 
 /// Sentinel value meaning "use current mouse position for this coordinate"
@@ -149,11 +171,13 @@ fn getCurrentMousePosition() Point {
 }
 
 fn resolvePoint(point: Point) Point {
-    if (point.x == CURRENT_POS_SENTINEL or point.y == CURRENT_POS_SENTINEL) {
+    if (point.rel_x or point.rel_y) {
         const current = getCurrentMousePosition();
         return .{
-            .x = if (point.x == CURRENT_POS_SENTINEL) current.x else point.x,
-            .y = if (point.y == CURRENT_POS_SENTINEL) current.y else point.y,
+            .x = if (point.rel_x) current.x + point.x else point.x,
+            .y = if (point.rel_y) current.y + point.y else point.y,
+            .rel_x = false,
+            .rel_y = false,
         };
     }
     return point;
@@ -393,15 +417,46 @@ test "parseAction - key_up" {
 test "parseAction - dot means current position" {
     const action = try parseAction("c", &.{ ".", "." });
     try std.testing.expect(action == .click);
-    try std.testing.expectEqual(CURRENT_POS_SENTINEL, action.click.x);
-    try std.testing.expectEqual(CURRENT_POS_SENTINEL, action.click.y);
+    try std.testing.expect(action.click.rel_x);
+    try std.testing.expect(action.click.rel_y);
+    try std.testing.expectEqual(@as(i32, 0), action.click.x);
+    try std.testing.expectEqual(@as(i32, 0), action.click.y);
 }
 
-test "parseAction - negative coordinates" {
+test "parseAction - relative coordinates with +" {
+    const action = try parseAction("m", &.{ "+100", "+200" });
+    try std.testing.expect(action == .move);
+    try std.testing.expect(action.move.rel_x);
+    try std.testing.expect(action.move.rel_y);
+    try std.testing.expectEqual(@as(i32, 100), action.move.x);
+    try std.testing.expectEqual(@as(i32, 200), action.move.y);
+}
+
+test "parseAction - relative coordinates with -" {
+    const action = try parseAction("m", &.{ "-50", "-75" });
+    try std.testing.expect(action == .move);
+    try std.testing.expect(action.move.rel_x);
+    try std.testing.expect(action.move.rel_y);
+    try std.testing.expectEqual(@as(i32, -50), action.move.x);
+    try std.testing.expectEqual(@as(i32, -75), action.move.y);
+}
+
+test "parseAction - absolute mixed with relative" {
+    const action = try parseAction("c", &.{ "500", "+10" });
+    try std.testing.expect(action == .click);
+    try std.testing.expect(!action.click.rel_x);
+    try std.testing.expect(action.click.rel_y);
+    try std.testing.expectEqual(@as(i32, 500), action.click.x);
+    try std.testing.expectEqual(@as(i32, 10), action.click.y);
+}
+
+test "parseAction - negative coordinates (absolute vs relative)" {
+    // In cliclick, "-100" is relative. Absolute negative coords aren't really a thing for screen space, 
+    // but we treat any sign as relative to match cliclick tool behavior.
     const action = try parseAction("m", &.{ "-100", "-200" });
     try std.testing.expect(action == .move);
+    try std.testing.expect(action.move.rel_x);
     try std.testing.expectEqual(@as(i32, -100), action.move.x);
-    try std.testing.expectEqual(@as(i32, -200), action.move.y);
 }
 
 test "parseAction - unknown command" {

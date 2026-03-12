@@ -1981,9 +1981,44 @@ test "cliclick - move with current position" {
             try std.testing.expect(process_cmd != null);
             try std.testing.expect(process_cmd.? == .cliclick);
             try std.testing.expect(process_cmd.?.cliclick == .click);
-            // Dot coordinates should be the sentinel value
-            try std.testing.expectEqual(std.math.minInt(i32), process_cmd.?.cliclick.click.x);
-            try std.testing.expectEqual(std.math.minInt(i32), process_cmd.?.cliclick.click.y);
+            // Dot coordinates should have rel_x/rel_y set and 0 offset
+            try std.testing.expect(process_cmd.?.cliclick.click.rel_x);
+            try std.testing.expect(process_cmd.?.cliclick.click.rel_y);
+            try std.testing.expectEqual(@as(i32, 0), process_cmd.?.cliclick.click.x);
+            try std.testing.expectEqual(@as(i32, 0), process_cmd.?.cliclick.click.y);
+        }
+    }
+}
+
+test "cliclick - relative coordinates with plus and minus" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\cmd - l : @cliclick("c", "+100", "-50")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    try parser.parseWithPath(&mappings, config, "test.conf");
+
+    const default_mode = mappings.mode_map.getPtr("default").?;
+    var it = default_mode.hotkey_map.iterator();
+
+    while (it.next()) |entry| {
+        const hotkey = entry.key_ptr.*;
+        if (hotkey.key == 0x25 and hotkey.flags.cmd) { // cmd - l
+            const process_cmd = hotkey.find_command_for_process("*");
+            try std.testing.expect(process_cmd != null);
+            try std.testing.expect(process_cmd.? == .cliclick);
+            try std.testing.expect(process_cmd.?.cliclick == .click);
+            try std.testing.expect(process_cmd.?.cliclick.click.rel_x);
+            try std.testing.expect(process_cmd.?.cliclick.click.rel_y);
+            try std.testing.expectEqual(@as(i32, 100), process_cmd.?.cliclick.click.x);
+            try std.testing.expectEqual(@as(i32, -50), process_cmd.?.cliclick.click.y);
         }
     }
 }

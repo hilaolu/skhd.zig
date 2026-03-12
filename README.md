@@ -103,6 +103,7 @@ The service will:
 - **Command definitions**: Define reusable commands with placeholders to reduce repetition
 - **Key Forwarding**: Forward / remap key binding to another key binding
 - **Mode activation with command**: Execute a command when switching modes (e.g., `cmd - w ; window : echo "Window mode"`)
+- **Built-in `@cliclick`**: Direct macOS mouse/keyboard simulation (e.g., `@cliclick("c", "100", "+20")`)
 
 ### Command-Line Interface
 

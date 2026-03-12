@@ -82,7 +82,11 @@ The codebase follows a modular architecture with clear separation of concerns:
    - Ensures child processes are fully detached from parent
    - Prevents zombie processes and terminal output interference
 
-10. **Tracer.zig** - Performance profiling infrastructure
+10. **cliclick.zig** - Built-in mouse and keyboard simulation
+    - Implements direct CGEvent-based actions
+    - No shell overhead, bypassed `exec.zig` directly from `skhd.zig`
+
+11. **Tracer.zig** - Performance profiling infrastructure
     - Provides execution tracing with `-P/--profile` flag
     - Helps identify performance bottlenecks
     - Available in Debug and ReleaseSafe builds only
