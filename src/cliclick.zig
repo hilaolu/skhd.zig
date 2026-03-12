@@ -14,6 +14,8 @@ pub const Action = union(enum) {
     move: Point, // m:x,y - move mouse
     drag_down: Point, // dd:x,y - mouse down (start drag)
     drag_up: Point, // du:x,y - mouse up (end drag)
+    scroll_line: ScrollVector, // sl:y,x,z - scroll lines
+    scroll_pixel: ScrollVector, // sp:y,x,z - scroll pixels
     key_press: u16, // kp:key - key press (down + up)
     key_down: u16, // kd:key - key down
     key_up: u16, // ku:key - key up
@@ -32,6 +34,8 @@ pub const Action = union(enum) {
             .move => |p| try writer.print("move({},{})", .{ p.x, p.y }),
             .drag_down => |p| try writer.print("drag_down({},{})", .{ p.x, p.y }),
             .drag_up => |p| try writer.print("drag_up({},{})", .{ p.x, p.y }),
+            .scroll_line => |v| try writer.print("scroll_line({},{},{})", .{ v.y, v.x, v.z }),
+            .scroll_pixel => |v| try writer.print("scroll_pixel({},{},{})", .{ v.y, v.x, v.z }),
             .key_press => |k| try writer.print("key_press({})", .{k}),
             .key_down => |k| try writer.print("key_down({})", .{k}),
             .key_up => |k| try writer.print("key_up({})", .{k}),
@@ -50,10 +54,22 @@ pub const Action = union(enum) {
             .move => |pa| pa.eql(b.move),
             .drag_down => |pa| pa.eql(b.drag_down),
             .drag_up => |pa| pa.eql(b.drag_up),
+            .scroll_line => |va| va.eql(b.scroll_line),
+            .scroll_pixel => |va| va.eql(b.scroll_pixel),
             .key_press => |ka| ka == b.key_press,
             .key_down => |ka| ka == b.key_down,
             .key_up => |ka| ka == b.key_up,
         };
+    }
+};
+
+pub const ScrollVector = struct {
+    y: i32,
+    x: i32,
+    z: i32,
+
+    pub fn eql(a: ScrollVector, b: ScrollVector) bool {
+        return a.y == b.y and a.x == b.x and a.z == b.z;
     }
 };
 
@@ -104,6 +120,12 @@ pub fn parseAction(cmd: []const u8, args: []const []const u8) ParseError!Action 
     } else if (std.mem.eql(u8, cmd, "du")) {
         const point = try parsePoint(args);
         return .{ .drag_up = point };
+    } else if (std.mem.eql(u8, cmd, "sl")) {
+        const vector = try parseScrollVector(args);
+        return .{ .scroll_line = vector };
+    } else if (std.mem.eql(u8, cmd, "sp")) {
+        const vector = try parseScrollVector(args);
+        return .{ .scroll_pixel = vector };
     }
     // Key commands that take a key name
     else if (std.mem.eql(u8, cmd, "kp")) {
@@ -129,6 +151,19 @@ fn parsePoint(args: []const []const u8) ParseError!Point {
     point.x = parseCoordinate(args[0], &point.rel_x) orelse return error.InvalidCoordinate;
     point.y = parseCoordinate(args[1], &point.rel_y) orelse return error.InvalidCoordinate;
     return point;
+}
+
+fn parseScrollVector(args: []const []const u8) ParseError!ScrollVector {
+    if (args.len < 1 or args.len > 3) return error.InvalidArgumentCount;
+    var vector = ScrollVector{ .y = 0, .x = 0, .z = 0 };
+    vector.y = std.fmt.parseInt(i32, args[0], 10) catch return error.InvalidCoordinate;
+    if (args.len >= 2) {
+        vector.x = std.fmt.parseInt(i32, args[1], 10) catch return error.InvalidCoordinate;
+    }
+    if (args.len >= 3) {
+        vector.z = std.fmt.parseInt(i32, args[2], 10) catch return error.InvalidCoordinate;
+    }
+    return vector;
 }
 
 fn parseCoordinate(s: []const u8, is_relative: *bool) ?i32 {
@@ -191,8 +226,10 @@ pub fn execute(action: Action) !void {
         .tripleclick => |p| try mouseClick(p, c.kCGEventLeftMouseDown, c.kCGEventLeftMouseUp, c.kCGMouseButtonLeft, 3),
         .rightclick => |p| try mouseClick(p, c.kCGEventRightMouseDown, c.kCGEventRightMouseUp, c.kCGMouseButtonRight, 1),
         .move => |p| try mouseMove(p),
-        .drag_down => |p| try mouseDragDown(p),
-        .drag_up => |p| try mouseDragUp(p),
+        .drag_down => |p| try mouseDown(p),
+        .drag_up => |p| try mouseUp(p),
+        .scroll_line => |v| try mouseScroll(v, c.kCGScrollEventUnitLine),
+        .scroll_pixel => |v| try mouseScroll(v, c.kCGScrollEventUnitPixel),
         .key_press => |keycode| try keyPress(keycode),
         .key_down => |keycode| try keyEvent(keycode, true),
         .key_up => |keycode| try keyEvent(keycode, false),
@@ -246,7 +283,7 @@ fn mouseMove(point: Point) !void {
     log.debug("cliclick: move to ({},{})", .{ resolved.x, resolved.y });
 }
 
-fn mouseDragDown(point: Point) !void {
+fn mouseDown(point: Point) !void {
     const resolved = resolvePoint(point);
     const cgpoint = c.CGPointMake(@floatFromInt(resolved.x), @floatFromInt(resolved.y));
 
@@ -259,10 +296,10 @@ fn mouseDragDown(point: Point) !void {
     defer c.CFRelease(down_event);
 
     c.CGEventPost(c.kCGHIDEventTap, down_event);
-    log.debug("cliclick: drag down at ({},{})", .{ resolved.x, resolved.y });
+    log.debug("cliclick: mouse down at ({},{})", .{ resolved.x, resolved.y });
 }
 
-fn mouseDragUp(point: Point) !void {
+fn mouseUp(point: Point) !void {
     const resolved = resolvePoint(point);
     const cgpoint = c.CGPointMake(@floatFromInt(resolved.x), @floatFromInt(resolved.y));
 
@@ -275,7 +312,51 @@ fn mouseDragUp(point: Point) !void {
     defer c.CFRelease(up_event);
 
     c.CGEventPost(c.kCGHIDEventTap, up_event);
-    log.debug("cliclick: drag up at ({},{})", .{ resolved.x, resolved.y });
+    log.debug("cliclick: mouse up at ({},{})", .{ resolved.x, resolved.y });
+}
+
+fn mouseScroll(vector: ScrollVector, units: c.CGScrollEventUnit) !void {
+    var scroll_vals = [3]i32{
+        vector.y * -1,
+        vector.x * -1,
+        vector.z * -1,
+    };
+
+    var scroll_dir = [3]i32{ 0, 0, 0 };
+    for (&scroll_vals, 0..) |*val, i| {
+        if (val.* >= 0) {
+            scroll_dir[i] = 1;
+        } else {
+            scroll_dir[i] = -1;
+            val.* *= -1;
+        }
+    }
+
+    const source = c.CGEventSourceCreate(c.kCGEventSourceStateHIDSystemState);
+    if (source == null) return error.FailedToCreateEventSource;
+    defer c.CFRelease(source);
+
+    while (scroll_vals[0] > 0 or scroll_vals[1] > 0 or scroll_vals[2] > 0) {
+        var scroll_part = [3]i32{ 0, 0, 0 };
+        for (&scroll_vals, 0..) |*val, i| {
+            scroll_part[i] = val.*;
+            if (scroll_part[i] > 10) {
+                scroll_part[i] = 10;
+                val.* -= 10;
+            } else {
+                val.* = 0;
+            }
+            scroll_part[i] *= scroll_dir[i];
+        }
+
+        const scroll_event = c.CGEventCreateScrollWheelEvent(source, units, 3, scroll_part[0], scroll_part[1], scroll_part[2]);
+        if (scroll_event == null) return error.FailedToCreateScrollEvent;
+        defer c.CFRelease(scroll_event);
+
+        c.CGEventPost(c.kCGHIDEventTap, scroll_event);
+    }
+
+    log.debug("cliclick: scroll vector ({}, {}, {})", .{ vector.y, vector.x, vector.z });
 }
 
 // ── Keyboard actions ───────────────────────────────────────────────
@@ -394,6 +475,27 @@ test "parseAction - drag_down" {
 test "parseAction - drag_up" {
     const action = try parseAction("du", &.{ "30", "40" });
     try std.testing.expect(action == .drag_up);
+}
+
+test "parseAction - scroll_line" {
+    const action = try parseAction("sl", &.{ "10", "2", "1" });
+    try std.testing.expect(action == .scroll_line);
+    try std.testing.expectEqual(@as(i32, 10), action.scroll_line.y);
+    try std.testing.expectEqual(@as(i32, 2), action.scroll_line.x);
+    try std.testing.expectEqual(@as(i32, 1), action.scroll_line.z);
+
+    const action2 = try parseAction("sl", &.{"-5"});
+    try std.testing.expect(action2 == .scroll_line);
+    try std.testing.expectEqual(@as(i32, -5), action2.scroll_line.y);
+    try std.testing.expectEqual(@as(i32, 0), action2.scroll_line.x);
+}
+
+test "parseAction - scroll_pixel" {
+    const action = try parseAction("sp", &.{ "100", "-50" });
+    try std.testing.expect(action == .scroll_pixel);
+    try std.testing.expectEqual(@as(i32, 100), action.scroll_pixel.y);
+    try std.testing.expectEqual(@as(i32, -50), action.scroll_pixel.x);
+    try std.testing.expectEqual(@as(i32, 0), action.scroll_pixel.z);
 }
 
 test "parseAction - key_press" {

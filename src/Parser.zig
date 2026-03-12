@@ -216,6 +216,25 @@ fn processStringOwned(self: *Parser, str: []const u8) ![]const u8 {
     return try result.toOwnedSlice();
 }
 
+// Helper function to handle errors from add_process_* methods with context
+test "parse tab + y" {
+    const allocator = std.testing.allocator;
+    const input = "tab + y : echo test\n";
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    parser.parse(&mappings, input) catch |err| {
+        if (err == error.ParseErrorOccurred) {
+            if (parser.error_info) |info| {
+                std.debug.print("\nError: {s}\n", .{info.message});
+            }
+        }
+        return err;
+    };
+}
+
 /// Helper function to handle errors from add_process_* methods with context
 fn handleProcessError(self: *Parser, err: anyerror, process_name: []const u8, operation: []const u8) !void {
     const msg = switch (err) {
@@ -996,7 +1015,7 @@ fn parse_cliclick_builtin(self: *Parser, ref_token: Token) !ParsedCommand {
 
     const action = Cliclick.parseAction(cmd_name, cmd_args) catch |err| {
         const msg = switch (err) {
-            Cliclick.ParseError.UnknownCommand => try std.fmt.allocPrint(self.allocator, "Unknown @cliclick command '{s}'. Valid commands: c, dc, tc, rc, m, dd, du, kp, kd, ku", .{cmd_name}),
+            Cliclick.ParseError.UnknownCommand => try std.fmt.allocPrint(self.allocator, "Unknown @cliclick command '{s}'. Valid commands: c, dc, tc, rc, m, dd, du, sl, sp, kp, kd, ku", .{cmd_name}),
             Cliclick.ParseError.InvalidArgumentCount => try std.fmt.allocPrint(self.allocator, "Invalid number of arguments for @cliclick command '{s}'", .{cmd_name}),
             Cliclick.ParseError.InvalidCoordinate => try std.fmt.allocPrint(self.allocator, "Invalid coordinate in @cliclick command '{s}'. Coordinates must be integers or '.' for current position", .{cmd_name}),
             Cliclick.ParseError.UnknownKeyName => try std.fmt.allocPrint(self.allocator, "Unknown key name in @cliclick command '{s}'", .{cmd_name}),

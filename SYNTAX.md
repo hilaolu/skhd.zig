@@ -232,6 +232,11 @@ cmd - i : @cliclick("m", "+100", "+0")       # Move 100px right
 cmd - j : @cliclick("m", "-100", "+0")       # Move 100px left
 cmd - k : @cliclick("c", "+0", "-50")        # Click 50px above current pos
 
+# Scrolling actions (take up to 3 values: y, x, z; positive = down/right)
+cmd - 1 : @cliclick("sl", "10")              # Scroll down 10 lines
+cmd - 2 : @cliclick("sl", "0", "5")          # Scroll right 5 lines
+cmd - 3 : @cliclick("sp", "-100")            # Scroll up 100 pixels
+
 # Keyboard actions (take key names or raw keycodes)
 cmd - r : @cliclick("kp", "return")          # Press Return
 cmd - t : @cliclick("kd", "shift")           # Hold Shift down
@@ -256,6 +261,8 @@ cmd - n [
 | `m` | Move mouse | x, y |
 | `dd` | Drag start (mouse down) | x, y |
 | `du` | Drag end (mouse up) | x, y |
+| `sl` | Scroll lines | y, [x, [z]] |
+| `sp` | Scroll pixels | y, [x, [z]] |
 | `kp` | Key press (down + up) | keyname |
 | `kd` | Key down | keyname |
 | `ku` | Key up | keyname |
