@@ -10,6 +10,7 @@ const Keycodes = @import("Keycodes.zig");
 const utils = @import("utils.zig");
 const ModifierFlag = @import("Keycodes.zig").ModifierFlag;
 const ParseError = @import("ParseError.zig").ParseError;
+const Cliclick = @import("cliclick.zig");
 
 const Parser = @This();
 const log = std.log.scoped(.parser);
@@ -303,10 +304,21 @@ fn parse_hotkey(self: *Parser, mappings: *Mappings) !void {
         // Check if there's a command after the mode activation
         if (self.match(.Token_Command)) {
             const result = try self.parse_command();
-            defer if (result.owns_memory) self.allocator.free(result.command);
-            hotkey.add_process_activation("*", mode_name, result.command) catch |err| {
-                try self.handleProcessError(err, "*", "mode activation");
-            };
+            switch (result) {
+                .shell => |shell| {
+                    defer if (shell.owns_memory) self.allocator.free(shell.command);
+                    hotkey.add_process_activation("*", mode_name, shell.command) catch |err| {
+                        try self.handleProcessError(err, "*", "mode activation");
+                    };
+                },
+                .cliclick => |action| {
+                    // cliclick action cannot be used as mode activation command, treat as error
+                    _ = action;
+                    const err_token = self.previous();
+                    self.error_info = try ParseError.fromToken(self.allocator, err_token, "@cliclick cannot be used as mode activation command", self.current_file_path);
+                    return error.ParseErrorOccurred;
+                },
+            }
         } else {
             hotkey.add_process_activation("*", mode_name, null) catch |err| {
                 try self.handleProcessError(err, "*", "mode activation");
@@ -319,10 +331,19 @@ fn parse_hotkey(self: *Parser, mappings: *Mappings) !void {
         };
     } else if (self.match(.Token_Command)) {
         const result = try self.parse_command();
-        defer if (result.owns_memory) self.allocator.free(result.command);
-        hotkey.add_process_command("*", result.command) catch |err| {
-            try self.handleProcessError(err, "*", "command");
-        };
+        switch (result) {
+            .shell => |shell| {
+                defer if (shell.owns_memory) self.allocator.free(shell.command);
+                hotkey.add_process_command("*", shell.command) catch |err| {
+                    try self.handleProcessError(err, "*", "command");
+                };
+            },
+            .cliclick => |action| {
+                hotkey.add_process_cliclick("*", action) catch |err| {
+                    try self.handleProcessError(err, "*", "cliclick command");
+                };
+            },
+        }
     } else if (self.match(.Token_Unbound)) {
         // Simple unbound action: <keysym> ~
         hotkey.add_process_unbound("*") catch |err| {
@@ -521,10 +542,8 @@ fn parse_proc_list(self: *Parser, mappings: *Mappings, hotkey: *Hotkey) !void {
         defer self.allocator.free(process_name);
         if (self.match(.Token_Command)) {
             const result = try self.parse_command();
-            defer if (result.owns_memory) self.allocator.free(result.command);
-            hotkey.add_process_command(process_name, result.command) catch |err| {
-                try self.handleProcessError(err, process_name, "command");
-            };
+            try addParsedCommandForProcess(self, hotkey, process_name, result);
+            freeParsedCommand(self, result);
         } else if (self.match(.Token_Forward)) {
             const keypress = try self.parse_keypress();
             hotkey.add_process_forward(process_name, keypress) catch |err| {
@@ -539,10 +558,19 @@ fn parse_proc_list(self: *Parser, mappings: *Mappings, hotkey: *Hotkey) !void {
             const mode_name = self.previous().text;
             if (self.match(.Token_Command)) {
                 const result = try self.parse_command();
-                defer if (result.owns_memory) self.allocator.free(result.command);
-                hotkey.add_process_activation(process_name, mode_name, result.command) catch |err| {
-                    try self.handleProcessError(err, process_name, "mode activation");
-                };
+                switch (result) {
+                    .shell => |shell| {
+                        defer if (shell.owns_memory) self.allocator.free(shell.command);
+                        hotkey.add_process_activation(process_name, mode_name, shell.command) catch |err| {
+                            try self.handleProcessError(err, process_name, "mode activation");
+                        };
+                    },
+                    .cliclick => {
+                        const err_token = self.previous();
+                        self.error_info = try ParseError.fromToken(self.allocator, err_token, "@cliclick cannot be used as mode activation command", self.current_file_path);
+                        return error.ParseErrorOccurred;
+                    },
+                }
             } else {
                 hotkey.add_process_activation(process_name, mode_name, null) catch |err| {
                     try self.handleProcessError(err, process_name, "mode activation");
@@ -574,12 +602,10 @@ fn parse_proc_list(self: *Parser, mappings: *Mappings, hotkey: *Hotkey) !void {
             if (self.match(.Token_Command)) {
                 // Apply same command to all processes in the group
                 const result = try self.parse_command();
-                defer if (result.owns_memory) self.allocator.free(result.command);
                 for (processes) |process_name| {
-                    hotkey.add_process_command(process_name, result.command) catch |err| {
-                        try self.handleProcessError(err, process_name, "command");
-                    };
+                    try addParsedCommandForProcess(self, hotkey, process_name, result);
                 }
+                freeParsedCommand(self, result);
             } else if (self.match(.Token_Forward)) {
                 const forward_key = try self.parse_keypress();
                 for (processes) |process_name| {
@@ -602,8 +628,17 @@ fn parse_proc_list(self: *Parser, mappings: *Mappings, hotkey: *Hotkey) !void {
                 var did_own_command = false;
                 if (self.match(.Token_Command)) {
                     const result = try self.parse_command();
-                    activation_command = result.command;
-                    did_own_command = result.owns_memory;
+                    switch (result) {
+                        .shell => |shell| {
+                            activation_command = shell.command;
+                            did_own_command = shell.owns_memory;
+                        },
+                        .cliclick => {
+                            const err_token = self.previous();
+                            self.error_info = try ParseError.fromToken(self.allocator, err_token, "@cliclick cannot be used as mode activation command", self.current_file_path);
+                            return error.ParseErrorOccurred;
+                        },
+                    }
                 }
                 defer if (did_own_command and activation_command != null) {
                     self.allocator.free(activation_command.?);
@@ -630,10 +665,8 @@ fn parse_proc_list(self: *Parser, mappings: *Mappings, hotkey: *Hotkey) !void {
     } else if (self.match(.Token_Wildcard)) {
         if (self.match(.Token_Command)) {
             const result = try self.parse_command();
-            defer if (result.owns_memory) self.allocator.free(result.command);
-            hotkey.add_process_command("*", result.command) catch |err| {
-                try self.handleProcessError(err, "*", "command");
-            };
+            try addParsedCommandForProcess(self, hotkey, "*", result);
+            freeParsedCommand(self, result);
         } else if (self.match(.Token_Forward)) {
             const keypress = try self.parse_keypress();
             hotkey.add_process_forward("*", keypress) catch |err| {
@@ -648,10 +681,19 @@ fn parse_proc_list(self: *Parser, mappings: *Mappings, hotkey: *Hotkey) !void {
             const mode_name = self.previous().text;
             if (self.match(.Token_Command)) {
                 const result = try self.parse_command();
-                defer if (result.owns_memory) self.allocator.free(result.command);
-                hotkey.add_process_activation("*", mode_name, result.command) catch |err| {
-                    try self.handleProcessError(err, "*", "mode activation");
-                };
+                switch (result) {
+                    .shell => |shell| {
+                        defer if (shell.owns_memory) self.allocator.free(shell.command);
+                        hotkey.add_process_activation("*", mode_name, shell.command) catch |err| {
+                            try self.handleProcessError(err, "*", "mode activation");
+                        };
+                    },
+                    .cliclick => {
+                        const err_token = self.previous();
+                        self.error_info = try ParseError.fromToken(self.allocator, err_token, "@cliclick cannot be used as mode activation command", self.current_file_path);
+                        return error.ParseErrorOccurred;
+                    },
+                }
             } else {
                 hotkey.add_process_activation("*", mode_name, null) catch |err| {
                     try self.handleProcessError(err, "*", "mode activation");
@@ -694,8 +736,17 @@ fn parse_mode_decl(self: *Parser, mappings: *Mappings) !void {
 
     if (self.match(.Token_Command)) {
         const result = try self.parse_command();
-        defer if (result.owns_memory) self.allocator.free(result.command);
-        try mode.set_command(result.command);
+        switch (result) {
+            .shell => |shell| {
+                defer if (shell.owns_memory) self.allocator.free(shell.command);
+                try mode.set_command(shell.command);
+            },
+            .cliclick => {
+                const err_token = self.previous();
+                self.error_info = try ParseError.fromToken(self.allocator, err_token, "@cliclick cannot be used as mode declaration command", self.current_file_path);
+                return error.ParseErrorOccurred;
+            },
+        }
     }
 
     if (mappings.get_mode_or_create_default(mode_name) catch |err| {
@@ -725,16 +776,47 @@ fn parse_mode_decl(self: *Parser, mappings: *Mappings) !void {
     }
 }
 
-/// Parse a command token, handling both regular commands and command references
-/// Returns the parsed command (caller owns memory if it's a reference)
+/// Parsed command result - either a shell command string or a built-in cliclick action
+pub const ParsedCommand = union(enum) {
+    shell: struct { command: []const u8, owns_memory: bool },
+    cliclick: Cliclick.Action,
+};
+
+/// Helper to add a ParsedCommand to a hotkey for a given process name.
+/// Does NOT free the ParsedCommand memory — caller must call freeParsedCommand after.
+fn addParsedCommandForProcess(self: *Parser, hotkey: *Hotkey, process_name: []const u8, result: ParsedCommand) !void {
+    switch (result) {
+        .shell => |shell| {
+            hotkey.add_process_command(process_name, shell.command) catch |err| {
+                try self.handleProcessError(err, process_name, "command");
+            };
+        },
+        .cliclick => |action| {
+            hotkey.add_process_cliclick(process_name, action) catch |err| {
+                try self.handleProcessError(err, process_name, "cliclick command");
+            };
+        },
+    }
+}
+
+/// Free any owned memory from a ParsedCommand (for cases where addParsedCommandForProcess
+/// was called with the result but defer can't be used inside the switch)
+fn freeParsedCommand(self: *Parser, result: ParsedCommand) void {
+    switch (result) {
+        .shell => |shell| if (shell.owns_memory) self.allocator.free(shell.command),
+        .cliclick => {},
+    }
+}
+
+/// Parse a command token, handling regular commands, command references, and builtins
+/// Returns a ParsedCommand (shell command or cliclick action)
 /// Throws error if command is empty without a reference
-fn parse_command(self: *Parser) !struct { command: []const u8, owns_memory: bool } {
+fn parse_command(self: *Parser) !ParsedCommand {
     const cmd_token = self.previous();
     if (cmd_token.text.len == 0) {
         if (self.peek_check(.Token_Reference)) {
             // Empty command followed by reference
-            const command = try self.parse_command_reference();
-            return .{ .command = command, .owns_memory = true };
+            return try self.parse_command_reference();
         } else {
             // Empty command with no reference is an error
             const err_token = self.peek() orelse cmd_token;
@@ -743,11 +825,11 @@ fn parse_command(self: *Parser) !struct { command: []const u8, owns_memory: bool
         }
     } else {
         // Regular command
-        return .{ .command = cmd_token.text, .owns_memory = false };
+        return .{ .shell = .{ .command = cmd_token.text, .owns_memory = false } };
     }
 }
 
-fn parse_command_reference(self: *Parser) ![]const u8 {
+fn parse_command_reference(self: *Parser) !ParsedCommand {
     // We expect a Token_Reference
     if (!self.match(.Token_Reference)) {
         const token = self.peek() orelse self.previous();
@@ -757,6 +839,11 @@ fn parse_command_reference(self: *Parser) ![]const u8 {
 
     const ref_token = self.previous();
     const command_name = ref_token.text;
+
+    // Check for built-in @cliclick command
+    if (std.mem.eql(u8, command_name, "cliclick")) {
+        return try self.parse_cliclick_builtin(ref_token);
+    }
 
     // Look up the command definition
     const cmd_def = self.command_defs.get(command_name) orelse {
@@ -835,7 +922,7 @@ fn parse_command_reference(self: *Parser) ![]const u8 {
             }
         }
 
-        return try result.toOwnedSlice();
+        return .{ .shell = .{ .command = try result.toOwnedSlice(), .owns_memory = true } };
     } else if (cmd_def.max_placeholder > 0) {
         // Error: command expects arguments but none provided
         const msg = try std.fmt.allocPrint(self.allocator, "Command '@{s}' expects {d} arguments but none provided", .{ command_name, cmd_def.max_placeholder });
@@ -855,8 +942,71 @@ fn parse_command_reference(self: *Parser) ![]const u8 {
             }
         }
 
-        return try result.toOwnedSlice();
+        return .{ .shell = .{ .command = try result.toOwnedSlice(), .owns_memory = true } };
     }
+}
+
+/// Parse built-in @cliclick("cmd", "arg1", ...) command
+fn parse_cliclick_builtin(self: *Parser, ref_token: Token) !ParsedCommand {
+    if (!self.match(.Token_BeginTuple)) {
+        self.error_info = try ParseError.fromToken(self.allocator, ref_token, "@cliclick requires arguments: @cliclick(\"cmd\", ...)", self.current_file_path);
+        return error.ParseErrorOccurred;
+    }
+
+    // Parse arguments
+    var args = std.ArrayList([]const u8).init(self.allocator);
+    defer args.deinit();
+    defer for (args.items) |arg| {
+        self.allocator.free(arg);
+    };
+
+    while (true) {
+        if (self.match(.Token_EndTuple)) {
+            break;
+        }
+
+        if (self.match(.Token_String)) {
+            const arg_token = self.previous();
+            const processed_arg = try self.processStringOwned(arg_token.text);
+            try args.append(processed_arg);
+
+            // Check for comma or closing paren
+            if (self.peek_check(.Token_EndTuple)) {
+                continue;
+            } else if (!self.match(.Token_Comma)) {
+                const token = self.peek() orelse self.previous();
+                self.error_info = try ParseError.fromToken(self.allocator, token, "Expected ',' or ')' after argument in @cliclick", self.current_file_path);
+                return error.ParseErrorOccurred;
+            }
+        } else {
+            const token = self.peek() orelse self.previous();
+            self.error_info = try ParseError.fromToken(self.allocator, token, "@cliclick arguments must be enclosed in double quotes", self.current_file_path);
+            return error.ParseErrorOccurred;
+        }
+    }
+
+    if (args.items.len < 1) {
+        self.error_info = try ParseError.fromToken(self.allocator, ref_token, "@cliclick requires at least a command argument, e.g. @cliclick(\"c\", \"100\", \"200\")", self.current_file_path);
+        return error.ParseErrorOccurred;
+    }
+
+    // First arg is the cliclick command name, rest are its arguments
+    const cmd_name = args.items[0];
+    const cmd_args = args.items[1..];
+
+    const action = Cliclick.parseAction(cmd_name, cmd_args) catch |err| {
+        const msg = switch (err) {
+            Cliclick.ParseError.UnknownCommand => try std.fmt.allocPrint(self.allocator, "Unknown @cliclick command '{s}'. Valid commands: c, dc, tc, rc, m, dd, du, kp, kd, ku", .{cmd_name}),
+            Cliclick.ParseError.InvalidArgumentCount => try std.fmt.allocPrint(self.allocator, "Invalid number of arguments for @cliclick command '{s}'", .{cmd_name}),
+            Cliclick.ParseError.InvalidCoordinate => try std.fmt.allocPrint(self.allocator, "Invalid coordinate in @cliclick command '{s}'. Coordinates must be integers or '.' for current position", .{cmd_name}),
+            Cliclick.ParseError.UnknownKeyName => try std.fmt.allocPrint(self.allocator, "Unknown key name in @cliclick command '{s}'", .{cmd_name}),
+        };
+        defer self.allocator.free(msg);
+        self.error_info = try ParseError.fromToken(self.allocator, ref_token, msg, self.current_file_path);
+        return error.ParseErrorOccurred;
+    };
+
+    return .{ .cliclick = action };
 }
 
 fn parseCommandTemplate(self: *Parser, template: []const u8, token: Token) !CommandDef {

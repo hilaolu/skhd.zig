@@ -4,6 +4,7 @@ const Hotkey = @This();
 const Mode = @import("Mode.zig");
 const utils = @import("utils.zig");
 const ModifierFlag = @import("Keycodes.zig").ModifierFlag;
+const Cliclick = @import("cliclick.zig");
 const log = std.log.scoped(.hotkey_array_hashmap);
 
 // Error sets for better type safety
@@ -159,6 +160,7 @@ pub const ProcessCommand = union(enum) {
     forwarded: KeyPress,
     unbound: void,
     activation: Activation,
+    cliclick: Cliclick.Action,
 
     pub const Activation = struct {
         mode_name: []const u8,
@@ -197,6 +199,11 @@ pub const ProcessCommand = union(enum) {
         } };
     }
 
+    /// Create a cliclick variant
+    pub fn initCliclick(action: Cliclick.Action) ProcessCommand {
+        return ProcessCommand{ .cliclick = action };
+    }
+
     /// Free any owned memory
     pub fn deinit(self: ProcessCommand, allocator: std.mem.Allocator) void {
         switch (self) {
@@ -205,6 +212,7 @@ pub const ProcessCommand = union(enum) {
                 allocator.free(act.mode_name);
                 if (act.command) |cmd| allocator.free(cmd);
             },
+            .cliclick => |action| action.deinit(allocator),
             else => {},
         }
     }
@@ -344,6 +352,34 @@ pub fn add_process_activation(self: *Hotkey, process_name: []const u8, mode_name
         if (std.meta.activeTag(existing_cmd) == ProcessCommand.activation and existing_cmd.activation.eql(owned_cmd.activation)) {
             self.allocator.free(owned_name);
             owned_cmd.deinit(self.allocator);
+            return; // No need to replace if it's the same
+        }
+        return error.ProcessCommandAlreadyExists;
+    }
+
+    // Put into hashmap
+    try self.mappings.put(self.allocator, owned_name, owned_cmd);
+}
+
+pub fn add_process_cliclick(self: *Hotkey, process_name: []const u8, action: Cliclick.Action) ProcessCommandError!void {
+    const owned_cmd = ProcessCommand.initCliclick(action);
+
+    if (std.mem.eql(u8, process_name, "*")) {
+        if (self.wildcard_command) |_| {
+            return error.WildcardCommandAlreadyExists;
+        }
+
+        self.wildcard_command = owned_cmd;
+        return;
+    }
+
+    const owned_name = try self.toLowercaseOwned(process_name);
+    errdefer self.allocator.free(owned_name);
+
+    // Check if we're replacing an existing mapping
+    if (self.mappings.get(owned_name)) |existing_cmd| {
+        if (std.meta.activeTag(existing_cmd) == ProcessCommand.cliclick and existing_cmd.cliclick.eql(owned_cmd.cliclick)) {
+            self.allocator.free(owned_name);
             return; // No need to replace if it's the same
         }
         return error.ProcessCommandAlreadyExists;

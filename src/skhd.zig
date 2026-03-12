@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 
 const c = @import("c.zig");
 const CarbonEvent = @import("CarbonEvent.zig");
+const Cliclick = @import("cliclick.zig");
 const EventTap = @import("EventTap.zig");
 const forkAndExec = @import("exec.zig").forkAndExec;
 const Hotkey = @import("Hotkey.zig");
@@ -633,6 +634,14 @@ inline fn processHotkey(self: *Skhd, eventkey: *const Hotkey.KeyPress, event: c.
                 log.debug("Executing command '{s}' for process {s}", .{ cmd, process_name });
                 self.tracer.traceCommandExecuted();
                 try forkAndExec(self.mappings.shell, cmd, self.verbose);
+                return if (hotkey.flags.passthrough) .passthrough else .consumed;
+            },
+            .cliclick => |action| {
+                log.debug("Executing cliclick action: {} for process {s}", .{ action, process_name });
+                self.tracer.traceCommandExecuted();
+                Cliclick.execute(action) catch |err| {
+                    log.err("cliclick action failed: {}", .{err});
+                };
                 return if (hotkey.flags.passthrough) .passthrough else .consumed;
             },
             .unbound => {

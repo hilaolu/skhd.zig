@@ -8,6 +8,7 @@ const Parser = @import("Parser.zig");
 const Mappings = @import("Mappings.zig");
 const Mode = @import("Mode.zig");
 const Skhd = @import("skhd.zig");
+const Cliclick = @import("cliclick.zig");
 const ParseError = @import("ParseError.zig").ParseError;
 const print = std.debug.print;
 const log = std.log.scoped(.tests);
@@ -1853,4 +1854,272 @@ test "NX media key forwarding" {
     try std.testing.expect(found_delete);
     try std.testing.expect(found_backslash);
     try std.testing.expect(found_cmd_p);
+}
+
+test "cliclick - simple click command" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\cmd - a : @cliclick("c", "100", "200")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    try parser.parseWithPath(&mappings, config, "test.conf");
+
+    const default_mode = mappings.mode_map.getPtr("default").?;
+    var it = default_mode.hotkey_map.iterator();
+
+    var found = false;
+    while (it.next()) |entry| {
+        const hotkey = entry.key_ptr.*;
+        if (hotkey.key == 0x00 and hotkey.flags.cmd) { // cmd - a
+            const process_cmd = hotkey.find_command_for_process("*");
+            try std.testing.expect(process_cmd != null);
+            switch (process_cmd.?) {
+                .cliclick => |action| {
+                    try std.testing.expect(action == .click);
+                    try std.testing.expectEqual(@as(i32, 100), action.click.x);
+                    try std.testing.expectEqual(@as(i32, 200), action.click.y);
+                    found = true;
+                },
+                else => return error.WrongCommandType,
+            }
+        }
+    }
+
+    try std.testing.expect(found);
+}
+
+test "cliclick - rightclick command" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\cmd - b : @cliclick("rc", "500", "300")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    try parser.parseWithPath(&mappings, config, "test.conf");
+
+    const default_mode = mappings.mode_map.getPtr("default").?;
+    var it = default_mode.hotkey_map.iterator();
+
+    while (it.next()) |entry| {
+        const hotkey = entry.key_ptr.*;
+        if (hotkey.key == 0x0B and hotkey.flags.cmd) { // cmd - b
+            const process_cmd = hotkey.find_command_for_process("*");
+            try std.testing.expect(process_cmd != null);
+            try std.testing.expect(process_cmd.? == .cliclick);
+            try std.testing.expect(process_cmd.?.cliclick == .rightclick);
+            try std.testing.expectEqual(@as(i32, 500), process_cmd.?.cliclick.rightclick.x);
+            try std.testing.expectEqual(@as(i32, 300), process_cmd.?.cliclick.rightclick.y);
+        }
+    }
+}
+
+test "cliclick - key press command" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\cmd - r : @cliclick("kp", "return")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    try parser.parseWithPath(&mappings, config, "test.conf");
+
+    const default_mode = mappings.mode_map.getPtr("default").?;
+    var it = default_mode.hotkey_map.iterator();
+
+    while (it.next()) |entry| {
+        const hotkey = entry.key_ptr.*;
+        if (hotkey.key == 0x0F and hotkey.flags.cmd) { // cmd - r
+            const process_cmd = hotkey.find_command_for_process("*");
+            try std.testing.expect(process_cmd != null);
+            try std.testing.expect(process_cmd.? == .cliclick);
+            try std.testing.expect(process_cmd.?.cliclick == .key_press);
+            try std.testing.expectEqual(@as(u16, 0x24), process_cmd.?.cliclick.key_press);
+        }
+    }
+}
+
+test "cliclick - move with current position" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\cmd - m : @cliclick("c", ".", ".")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    try parser.parseWithPath(&mappings, config, "test.conf");
+
+    const default_mode = mappings.mode_map.getPtr("default").?;
+    var it = default_mode.hotkey_map.iterator();
+
+    while (it.next()) |entry| {
+        const hotkey = entry.key_ptr.*;
+        if (hotkey.key == 0x2E and hotkey.flags.cmd) { // cmd - m
+            const process_cmd = hotkey.find_command_for_process("*");
+            try std.testing.expect(process_cmd != null);
+            try std.testing.expect(process_cmd.? == .cliclick);
+            try std.testing.expect(process_cmd.?.cliclick == .click);
+            // Dot coordinates should be the sentinel value
+            try std.testing.expectEqual(std.math.minInt(i32), process_cmd.?.cliclick.click.x);
+            try std.testing.expectEqual(std.math.minInt(i32), process_cmd.?.cliclick.click.y);
+        }
+    }
+}
+
+test "cliclick - with process groups" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\.define browsers ["firefox", "chrome"]
+        \\cmd - a [
+        \\    @browsers : @cliclick("c", "100", "200")
+        \\    * : echo "default"
+        \\]
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    try parser.parseWithPath(&mappings, config, "test.conf");
+
+    const default_mode = mappings.mode_map.getPtr("default").?;
+    var it = default_mode.hotkey_map.iterator();
+
+    while (it.next()) |entry| {
+        const hotkey = entry.key_ptr.*;
+        if (hotkey.key == 0x00 and hotkey.flags.cmd) { // cmd - a
+            // Firefox should have cliclick
+            const firefox_cmd = hotkey.find_command_for_process("firefox");
+            try std.testing.expect(firefox_cmd != null);
+            try std.testing.expect(firefox_cmd.? == .cliclick);
+            try std.testing.expect(firefox_cmd.?.cliclick == .click);
+
+            // Chrome should have cliclick
+            const chrome_cmd = hotkey.find_command_for_process("chrome");
+            try std.testing.expect(chrome_cmd != null);
+            try std.testing.expect(chrome_cmd.? == .cliclick);
+
+            // Wildcard should have shell command
+            const wildcard_cmd = hotkey.find_command_for_process("*");
+            try std.testing.expect(wildcard_cmd != null);
+            try std.testing.expect(wildcard_cmd.? == .command);
+            try std.testing.expectEqualStrings("echo \"default\"", wildcard_cmd.?.command);
+        }
+    }
+}
+
+test "cliclick - error unknown command" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\cmd - a : @cliclick("zz", "100", "200")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    const result = parser.parseWithPath(&mappings, config, "test.conf");
+    try testing.expectError(error.ParseErrorOccurred, result);
+
+    const parse_err = parser.error_info.?;
+    try testing.expect(std.mem.containsAtLeast(u8, parse_err.message, 1, "Unknown @cliclick command"));
+}
+
+test "cliclick - error missing arguments" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\cmd - a : @cliclick("c", "100")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    const result = parser.parseWithPath(&mappings, config, "test.conf");
+    try testing.expectError(error.ParseErrorOccurred, result);
+
+    const parse_err = parser.error_info.?;
+    try testing.expect(std.mem.containsAtLeast(u8, parse_err.message, 1, "Invalid number of arguments"));
+}
+
+test "cliclick - error in mode activation" {
+    const allocator = std.testing.allocator;
+
+    const config =
+        \\:: window
+        \\cmd - w ; window : @cliclick("c", "100", "200")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    const result = parser.parseWithPath(&mappings, config, "test.conf");
+    try testing.expectError(error.ParseErrorOccurred, result);
+
+    const parse_err = parser.error_info.?;
+    try testing.expect(std.mem.containsAtLeast(u8, parse_err.message, 1, "@cliclick cannot be used as mode activation command"));
+}
+
+test "cliclick - no .define needed" {
+    const allocator = std.testing.allocator;
+
+    // cliclick should work without any .define directive
+    const config =
+        \\cmd - a : @cliclick("m", "0", "0")
+    ;
+
+    var mappings = try Mappings.init(allocator);
+    defer mappings.deinit();
+
+    var parser = try Parser.init(allocator);
+    defer parser.deinit();
+
+    try parser.parseWithPath(&mappings, config, "test.conf");
+
+    const default_mode = mappings.mode_map.getPtr("default").?;
+    try testing.expectEqual(@as(usize, 1), default_mode.hotkey_map.count());
+
+    var it = default_mode.hotkey_map.iterator();
+    const entry = it.next().?;
+    const hotkey = entry.key_ptr.*;
+    const cmd = hotkey.find_command_for_process("*");
+    try testing.expect(cmd != null);
+    try testing.expect(cmd.? == .cliclick);
+    try testing.expect(cmd.?.cliclick == .move);
+    try testing.expectEqual(@as(i32, 0), cmd.?.cliclick.move.x);
+    try testing.expectEqual(@as(i32, 0), cmd.?.cliclick.move.y);
 }

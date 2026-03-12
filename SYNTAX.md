@@ -210,6 +210,53 @@ cmd - h : @yabai_focus("west")
 cmd + shift - h : @window_action("swap", "west")
 ```
 
+### Built-in `@cliclick` Command (New in skhd.zig!)
+
+The `@cliclick` built-in dispatches mouse and keyboard actions directly via macOS CGEvent APIs — no shell overhead, no external binary needed.
+
+```bash
+# Syntax: @cliclick("<command>", "<arg1>", "<arg2>", ...)
+
+# Mouse actions (take x, y coordinates; use "." for current position)
+cmd - a : @cliclick("c", "100", "200")       # Left click at (100, 200)
+cmd - b : @cliclick("dc", "100", "200")      # Double click
+cmd - c : @cliclick("tc", "100", "200")      # Triple click
+cmd - d : @cliclick("rc", "500", "300")      # Right click
+cmd - e : @cliclick("m", "0", "0")           # Move mouse to (0, 0)
+cmd - f : @cliclick("dd", "100", "200")      # Mouse down (start drag)
+cmd - g : @cliclick("du", "300", "400")      # Mouse up (end drag)
+cmd - h : @cliclick("c", ".", ".")           # Click at current position
+
+# Keyboard actions (take key names or raw keycodes)
+cmd - r : @cliclick("kp", "return")          # Press Return
+cmd - t : @cliclick("kd", "shift")           # Hold Shift down
+cmd - y : @cliclick("ku", "shift")           # Release Shift
+cmd - u : @cliclick("kp", "0x24")            # Press key by raw keycode
+
+# Works in process lists too
+cmd - n [
+    "firefox" : @cliclick("c", "100", "200")
+    *         : echo "default"
+]
+```
+
+**Supported commands:**
+
+| Command | Description | Arguments |
+|---------|------------|-----------|
+| `c` | Left click | x, y |
+| `dc` | Double click | x, y |
+| `tc` | Triple click | x, y |
+| `rc` | Right click | x, y |
+| `m` | Move mouse | x, y |
+| `dd` | Drag start (mouse down) | x, y |
+| `du` | Drag end (mouse up) | x, y |
+| `kp` | Key press (down + up) | keyname |
+| `kd` | Key down | keyname |
+| `ku` | Key up | keyname |
+
+**Supported key names:** `return`, `enter`, `tab`, `space`, `delete`, `backspace`, `escape`, `esc`, `cmd`, `command`, `shift`, `capslock`, `alt`, `option`, `ctrl`, `control`, `fn`, `home`, `end`, `pageup`, `pagedown`, `left`, `right`, `up`, `down`, `fwd-delete`, `f1`-`f12`, or raw hex keycodes.
+
 ## Syntax Examples
 
 ### Basic Hotkey
