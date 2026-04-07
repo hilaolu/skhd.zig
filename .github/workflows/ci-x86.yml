@@ -41,7 +41,7 @@ jobs:
         version: 0.14.0
     
     - name: Build ${{ matrix.optimize }}
-      run: zig build -Doptimize=${{ matrix.optimize }} -Dtarget=x86_64-macos
+      run: zig build -Doptimize=${{ matrix.optimize }}
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
